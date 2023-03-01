@@ -52,8 +52,13 @@ void setup()
 
 /* ============= LOOP CORE 0 ============= */
 void loop()
-{
+{ 
+  
   while (Serial1.read() != -1);
+  /*{
+    dato = Serial1.read();
+    Serial.print(dato, HEX);
+  }*/
   /*if (Serial1.available() > 0)
   { // Reviso la comunicacion con el variador
     Serial.print(" Leo dato ");
@@ -67,14 +72,14 @@ void loop()
     {
     case 'R': // RUN
       digitalWrite(LED1_PIN, HIGH);
-      digitalWrite(LED2_PIN, LOW);
+      //digitalWrite(LED2_PIN, LOW);
       motorRUN();
       Serial.println("Motor - RUN");
       //comando = '0';
       break;
     case 'S': // STOP
       digitalWrite(LED1_PIN, LOW);
-      digitalWrite(LED2_PIN, HIGH);
+      //digitalWrite(LED2_PIN, HIGH);
       motorSTOP();
       Serial.println("Motor - STOP");
       //comando = '0';
@@ -93,6 +98,7 @@ void loop()
   }
   Serial.print("-");
   delay(200);
+  (digitalRead(LED2_PIN)) ? digitalWrite(LED2_PIN, LOW) : digitalWrite(LED2_PIN, HIGH);
 }
 /* ============= FUNCIONES ============= */
 void motorRUN(void)
@@ -169,10 +175,10 @@ void motorSETfreq(void)
   {
     Serial1.write(trama[i]);
   }
-  // Serial1.flush();
+  Serial1.flush();
   delayMicroseconds(2100);
   // Serial1.flush();
   digitalWrite(RS485_EN, LOW);
-  while (Serial1.read() != -1);
+  //while (Serial1.read() != -1);
   // delayMicroseconds(2000);
 }
