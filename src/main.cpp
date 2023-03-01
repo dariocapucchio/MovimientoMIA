@@ -102,7 +102,7 @@ void motorRUN(void){
   trama[6] = 0x43;
   trama[7] = 0xCA;
 
-  while (Serial1.available() > 0);
+  while (Serial1.read() != -1);
   digitalWrite(RS485_EN,HIGH);
   delayMicroseconds(365);
   int i;
@@ -114,7 +114,7 @@ void motorRUN(void){
   delayMicroseconds(2100);
   //Serial1.flush();
   digitalWrite(RS485_EN,LOW);
-  while (Serial1.available() > 0);
+  while (Serial1.read() != -1);
   //delayMicroseconds(2000);
 }
 void motorSTOP(void){
@@ -128,7 +128,7 @@ void motorSTOP(void){
   trama[6] = 0x02;
   trama[7] = 0x08;
 
-  while (Serial1.available() > 0);
+  while (Serial1.read() != -1);
   digitalWrite(RS485_EN,HIGH);
   delayMicroseconds(365);
   int i;
@@ -140,7 +140,7 @@ void motorSTOP(void){
   delayMicroseconds(2100);
   //Serial1.flush();
   digitalWrite(RS485_EN,LOW);
-  while (Serial1.available() > 0);
+  while (Serial1.read() != -1);
   //delayMicroseconds(2000);
 }
 void motorSETfreq(void){
