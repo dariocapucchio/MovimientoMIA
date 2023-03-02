@@ -15,14 +15,17 @@
 #define LED2_PIN 15
 #define RS485_EN 2
 
-#define SLAVE_ADDR 0x01 // Direccion del esclavo
-#define CMD_READ 0x03   // Comando de lectura
-#define CMD_WRITE 0x06  // Comando de escritura
+#define SLAVE_ADDR 0x01           // Direccion del esclavo (variador)
+#define CMD_READ 0x03             // Comando de lectura
+#define CMD_WRITE 0x06            // Comando de escritura
+#define COMMAND_WORD_ADDR 0x2000  // Direccion para comandos al variador
+#define RUN_VALUE 0x0001          // Valor para el comando RUN
+#define STOP_VALUE 0x0006         // Valor para el comando STOP
+#define SPEED_PARAM_ADDR 0x1000   // Direccion para setear la velocidad
 
 // FUNCIONES
-void motorRUN(void);
-void motorSTOP(void);
-void motorSETfreq(void);
+int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor);
+uint16_t crc16_update(uint16_t crc, uint8_t a);
 
 // VARIABLES DE FLUJO DE PROGRAMA
 char dato;
@@ -54,7 +57,7 @@ void setup()
 void loop()
 { 
   
-  while (Serial1.read() != -1);
+  //while (Serial1.read() != -1);
   /*{
     dato = Serial1.read();
     Serial.print(dato, HEX);
@@ -65,6 +68,7 @@ void loop()
     dato = Serial1.read();
     Serial.print(dato, HEX);
   }*/
+  Serial.print("+");
   if (Serial.available() > 0)
   { // Reviso la comunicacion con la PC
     comando = Serial.read();
@@ -72,21 +76,19 @@ void loop()
     {
     case 'R': // RUN
       digitalWrite(LED1_PIN, HIGH);
-      //digitalWrite(LED2_PIN, LOW);
-      motorRUN();
-      Serial.println("Motor - RUN");
+      Serial.print("Motor RUN - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,COMMAND_WORD_ADDR,RUN_VALUE));
       //comando = '0';
       break;
     case 'S': // STOP
       digitalWrite(LED1_PIN, LOW);
-      //digitalWrite(LED2_PIN, HIGH);
-      motorSTOP();
-      Serial.println("Motor - STOP");
+      Serial.print("Motor STOP - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,COMMAND_WORD_ADDR,STOP_VALUE));
       //comando = '0';
       break;
     case 'F': // F SET 50%
-      motorSETfreq();
-      Serial.println("Motor - set F 50%");
+      Serial.println("Motor SET F 50% - check:");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,SPEED_PARAM_ADDR,0x1388));
       //comando = '0';
       break;
     default: // OTRO CARACTER
@@ -96,89 +98,63 @@ void loop()
     }
     Serial.flush();
   }
-  Serial.print("-");
+  Serial.print(".");
   delay(200);
   (digitalRead(LED2_PIN)) ? digitalWrite(LED2_PIN, LOW) : digitalWrite(LED2_PIN, HIGH);
 }
 /* ============= FUNCIONES ============= */
-void motorRUN(void)
-{
+int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor) {
   char trama[8];
-  trama[0] = SLAVE_ADDR; // 0x01
-  trama[1] = CMD_WRITE;  // 0x06
-  trama[2] = 0x20;
-  trama[3] = 0x00;
-  trama[4] = 0x00;
-  trama[5] = 0x01;
-  trama[6] = 0x43;
-  trama[7] = 0xCA;
+  int i = 0;
+  int check_count = 0;
+  uint16_t crc = 0xFFFF;
+  trama[0] = dir;         // 0x01 - Direccion del esclavo
+  trama[1] = CMD_WRITE;   // 0x06 - Escribir Registro
+  trama[2] = highByte(registro);
+  trama[3] = lowByte(registro);
+  trama[4] = highByte(valor);
+  trama[5] = lowByte(valor);
+  for (i = 0; i < 6; i++)
+  {
+    crc = crc16_update(crc, trama[i]);
+  }
+  trama[6] = lowByte(crc);
+  trama[7] = highByte(crc);
 
-  while (Serial1.read() != -1);
   digitalWrite(RS485_EN, HIGH);
-  delayMicroseconds(365);
-  int i;
+  //delayMicroseconds(365);
+  
+  i = 0;
   for (i = 0; i < 8; i++)
   {
     Serial1.write(trama[i]);
   }
+
   Serial1.flush();
   delayMicroseconds(2100);
-  // Serial1.flush();
+  
   digitalWrite(RS485_EN, LOW);
-  //while (Serial1.read() != -1);
-  // delayMicroseconds(2000);
+
+  /*i = 0;
+  for (i = 0; i < 8; i++)
+  {
+    if (Serial1.read() == trama[i])
+    {
+      check_count++;
+    }
+  }
+  */
+  return check_count;
 }
-void motorSTOP(void)
-{
-  char trama[8];
-  trama[0] = SLAVE_ADDR; // 0x01
-  trama[1] = CMD_WRITE;  // 0x06
-  trama[2] = 0x20;
-  trama[3] = 0x00;
-  trama[4] = 0x00;
-  trama[5] = 0x06;
-  trama[6] = 0x02;
-  trama[7] = 0x08;
-
-  while (Serial1.read() != -1);
-  digitalWrite(RS485_EN, HIGH);
-  delayMicroseconds(365);
-  int i;
-  for (i = 0; i < 8; i++)
-  {
-    Serial1.write(trama[i]);
-  }
-  Serial1.flush();
-  delayMicroseconds(2100);
-  // Serial1.flush();
-  digitalWrite(RS485_EN, LOW);
-  //while (Serial1.read() != -1);
-  // delayMicroseconds(2000);
-}
-void motorSETfreq(void)
-{
-  char trama[8];
-  trama[0] = SLAVE_ADDR; // 0x01
-  trama[1] = CMD_WRITE;  // 0x06
-  trama[2] = 0x10;
-  trama[3] = 0x00;
-  trama[4] = 0x13;
-  trama[5] = 0x88;
-  trama[6] = 0x80;
-  trama[7] = 0x5C;
-
-  while (Serial1.read() != -1);
-  digitalWrite(RS485_EN, HIGH);
-  delayMicroseconds(365);
-  int i;
-  for (i = 0; i < 8; i++)
-  {
-    Serial1.write(trama[i]);
-  }
-  Serial1.flush();
-  delayMicroseconds(2100);
-  // Serial1.flush();
-  digitalWrite(RS485_EN, LOW);
-  //while (Serial1.read() != -1);
-  // delayMicroseconds(2000);
+/* FUNCION PARA CALCULAR EL CRC */
+uint16_t crc16_update(uint16_t crc, uint8_t a) {
+	int i;
+	crc ^= (uint16_t)a;
+	for (i = 0; i < 8; ++i) {
+		if (crc & 1)
+			crc = (crc >> 1) ^ 0xA001;
+		else
+			crc = (crc >> 1);
+	}
+	return crc;
 }
