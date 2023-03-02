@@ -57,17 +57,6 @@ void setup()
 void loop()
 { 
   
-  //while (Serial1.read() != -1);
-  /*{
-    dato = Serial1.read();
-    Serial.print(dato, HEX);
-  }*/
-  /*if (Serial1.available() > 0)
-  { // Reviso la comunicacion con el variador
-    Serial.print(" Leo dato ");
-    dato = Serial1.read();
-    Serial.print(dato, HEX);
-  }*/
   Serial.print("+");
   if (Serial.available() > 0)
   { // Reviso la comunicacion con la PC
