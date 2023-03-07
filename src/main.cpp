@@ -56,39 +56,34 @@ void setup()
 /* ============= LOOP CORE 0 ============= */
 void loop()
 { 
-  
-  Serial.print("+");
   if (Serial.available() > 0)
   { // Reviso la comunicacion con la PC
     comando = Serial.read();
     switch (comando)
     {
-    case 'R': // RUN
+    case 'R':           // RUN
       digitalWrite(LED1_PIN, HIGH);
       Serial.print("Motor RUN - check: ");
       Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,COMMAND_WORD_ADDR,RUN_VALUE));
-      //comando = '0';
       break;
-    case 'S': // STOP
+    case 'S':           // STOP
       digitalWrite(LED1_PIN, LOW);
       Serial.print("Motor STOP - check: ");
       Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,COMMAND_WORD_ADDR,STOP_VALUE));
-      //comando = '0';
       break;
-    case 'F': // F SET 50%
+    case 'F':           // F SET 50%
       Serial.println("Motor SET F 50% - check:");
       Serial.println(ModbusEscribirRegistro(SLAVE_ADDR,SPEED_PARAM_ADDR,0x1388));
-      //comando = '0';
       break;
-    default: // OTRO CARACTER
+    default:            // OTRO CARACTER
       Serial.println("Comando incorrecto :(");
-      //comando = '0';
       break;
     }
-    Serial.flush();
+    //Serial.flush();
   }
-  Serial.print(".");
+  Serial.print(".");    // Estoy vivo
   delay(200);
+  // Toggle led
   (digitalRead(LED2_PIN)) ? digitalWrite(LED2_PIN, LOW) : digitalWrite(LED2_PIN, HIGH);
 }
 /* ============= FUNCIONES ============= */
@@ -119,20 +114,19 @@ int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor) {
     Serial1.write(trama[i]);
   }
 
-  Serial1.flush();
-  delayMicroseconds(2100);
-  
+  //Serial1.flush();
+  delayMicroseconds(2500);  // 3 bytes
+
   digitalWrite(RS485_EN, LOW);
 
-  /*i = 0;
+  delayMicroseconds(6700);  // 8 bytes
+
+  // Chequeo del dato
+  i = 0;
   for (i = 0; i < 8; i++)
   {
-    if (Serial1.read() == trama[i])
-    {
-      check_count++;
-    }
+    (Serial1.read() == trama[i]) ? check_count++ : i=8;
   }
-  */
   return check_count;
 }
 /* FUNCION PARA CALCULAR EL CRC */
