@@ -17,26 +17,30 @@
 #define LED2_PIN 15
 #define RS485_EN 2
 
-#define SLAVE_ADDR 0x01          // Direccion del esclavo (variador)
-#define CMD_READ 0x03            // Comando de lectura
-#define CMD_WRITE 0x06           // Comando de escritura
-#define COMMAND_WORD_ADDR 0x2000 // Direccion para comandos al variador
-#define RUN_VALUE 0x0001         // Valor para el comando RUN
-#define STOP_VALUE 0x0006        // Valor para el comando STOP
-#define SPEED_PARAM_ADDR 0x1000  // Direccion para setear la velocidad
+#define SLAVE_ADDR 0x01           // Direccion del esclavo (variador)
+#define CMD_READ 0x03             // Comando de lectura
+#define CMD_WRITE 0x06            // Comando de escritura
+#define COMMAND_WORD_ADDR 0x2000  // Direccion para comandos al variador
+#define FOWARD_VALUE      0x0001  // Valor para el comando FOWARD
+#define REVERSE_VALUE     0x0002  // Valor para el comando REVERSE
+#define FOWARD_JOG_VALUE  0x0003  // Valor para el comando FOWARD JOG
+#define REVERSE_JOG_VALUE 0x0004  // Valor para el comando REVERSE JOG
+#define FREE_STOP_VALUE   0x0005  // Valor para el comando FREE STOP
+#define STOP_VALUE        0x0006  // Valor para el comando STOP
+#define JOG_STOP_VALUE    0x0008  // Valor para el comando JOG STOP
+#define SPEED_PARAM_ADDR  0x1000  // Direccion para setear la velocidad
 
 #define CLIENT_ID "MIA"
 
 // FUNCIONES
 int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor);
 uint16_t crc16_update(uint16_t crc, uint8_t a);
+void callback(char* topic, byte* payload, unsigned int length);  // Funcion para la recepcion via MQTT
+void reconnect(void);
 
 // DEFINICIONES PARA LA CONEXION ETHERNET CON ENC28J60
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE}; // Dirección MAC del módulo Ethernet
 IPAddress server(163, 10, 43, 68);                 // IP del broker MQTT
-
-void callback(char* topic, byte* payload, unsigned int length);  // Funcion para la recepcion via MQTT
-void reconnect(void);
 
 EthernetClient client;
 PubSubClient mqttClient(client);
@@ -45,6 +49,7 @@ PubSubClient mqttClient(client);
 char dato;
 char comando;
 bool flag_mqtt;
+uint16_t speed;
 // byte trama[10];
 
 /* ============= SETUP CORE 0 ============= */
@@ -106,6 +111,7 @@ void setup()
 
   comando = '0';
   flag_mqtt = false;
+  speed = 50;
 
   delay(1000);
 }
@@ -122,19 +128,44 @@ void loop()
     }
     switch (comando)
     {
-    case 'R': // RUN
+    case 'R': // FOWARD
       digitalWrite(LED1_PIN, HIGH);
-      Serial.print("Motor RUN - check: ");
-      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, RUN_VALUE));
+      Serial.print("Motor FOWARD - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, FOWARD_VALUE));
       break;
-    case 'S': // STOP
+    case 'r': // REVERSE
+      digitalWrite(LED1_PIN, HIGH);
+      Serial.print("Motor REVERSE - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, REVERSE_VALUE));
+      break;
+    case 'J': // FOWARD JOG
+      digitalWrite(LED1_PIN, HIGH);
+      Serial.print("Motor FOWARD JOG - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, FOWARD_JOG_VALUE));
+      break;
+    case 'j': // REVERSE JOG
+      digitalWrite(LED1_PIN, HIGH);
+      Serial.print("Motor REVERSE JOG - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, REVERSE_JOG_VALUE));
+      break;
+    case 's': // FREE STOP (Emergencia - enclavamiento)
+      digitalWrite(LED1_PIN, LOW);
+      Serial.print("Motor FREE STOP - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, FREE_STOP_VALUE));
+      break;
+    case 'S': // STOP (Rodado libre)
       digitalWrite(LED1_PIN, LOW);
       Serial.print("Motor STOP - check: ");
       Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, STOP_VALUE));
       break;
-    case 'F': // F SET 50%
-      Serial.println("Motor SET F 50% - check:");
-      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, SPEED_PARAM_ADDR, 0x1388));
+    case 'x': // STOP JOG
+      digitalWrite(LED1_PIN, LOW);
+      Serial.print("Motor STOP JOG - check: ");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, COMMAND_WORD_ADDR, JOG_STOP_VALUE));
+      break;
+    case 'F': // F SET SPEED
+      Serial.println("Motor SET SPEED  - check:");
+      Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, SPEED_PARAM_ADDR, speed));
       break;
     default: // OTRO CARACTER
       Serial.println("Comando incorrecto :(");
@@ -142,7 +173,11 @@ void loop()
     }
     // Serial.flush();
   }
-  Serial.print("."); // Estoy vivo
+  if (!mqttClient.connected()) {
+    Serial.println("reconectando...");
+    reconnect();
+  }
+  //Serial.print("."); // Estoy vivo
   delay(200);
   mqttClient.loop();
   // Toggle led
@@ -227,13 +262,18 @@ void callback(char* topic, byte* payload, unsigned int length)
 {
   Serial.print("Mensaje en topico [");
   Serial.print(topic);
-  Serial.print("] ");
+  Serial.print("] : ");
   String topic_str(topic);  // Topico a String
-  /*String string_aux;        // Payload a String
-  for (int i = 1; i < length; i++) {
+  String string_aux;        // Payload a String
+  for (unsigned int i = 1; i < length; i++) {
     string_aux += (char)payload[i];
-  }*/
+  }
   Serial.print((char)payload[0]);
   comando = (char)payload[0];
   flag_mqtt = true;
+  if (comando == 'F') {
+    speed = string_aux.toInt() * 100;
+    Serial.print(speed);
+  }
+  Serial.println();
 }
