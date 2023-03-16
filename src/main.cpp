@@ -32,7 +32,7 @@
 #define SPEED_PARAM_ADDR    0x1000  // Direccion para setear la velocidad
 #define RUNNING_SPEED_ADDR  0x1007  // Direccion con la velocidad actual
 
-#define CLIENT_ID "MIA"
+#define CLIENT_ID "MIA_movimiento"  // ID del cliente mqtt
 
 // FUNCIONES
 int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor);
@@ -51,14 +51,12 @@ PubSubClient mqttClient(client);
 long previousMillis;  // Variable para contar el tiempo entre publicaciones
 
 // VARIABLES DE FLUJO DE PROGRAMA
-char dato;
-char comando;
-bool flag_mqtt;
-uint16_t speed;
-int inst_speed = 0;
-// byte trama[10];
+char comando;             // Caracter con la accion de comando
+bool flag_mqtt;           // Flag para reconocer la recepcion por mqtt
+uint16_t speed;           // Velocidad (set point) al variador
+int inst_speed_hz = 0;    // Velocidad instantanea en Hz
 
-/* ============= SETUP CORE 0 ============= */
+/* ========================== SETUP CORE 0 ========================== */
 void setup()
 {
   Serial.begin(115200); // Comunicacion serie con la PC - USB
@@ -74,10 +72,9 @@ void setup()
   digitalWrite(RS485_EN, LOW); // Recivo RS485
   // digitalWrite(RS485_EN,HIGH); // Envio RS485
 
-  Serial.print("Apreta el boton 1 o me quedo aca ");
   while (digitalRead(BUTTON1) != LOW)
   {
-    Serial.print("?");
+    Serial.println("Apreta el boton 1 o me quedo aca ");
     delay(500);
   }
 
@@ -123,16 +120,18 @@ void setup()
   delay(1000);
 }
 
-/* ============= LOOP CORE 0 ============= */
+/* ========================== LOOP CORE 0 ========================== */
 void loop()
 {
   if (Serial.available() > 0 || flag_mqtt == true)
-  { // Reviso la comunicacion con la PC
+  { // Reviso la comunicacion con la PC o la recepcion por mqtt
+    // Obtengo el comando
     if (flag_mqtt == false){
       comando = Serial.read();
     } else {
       flag_mqtt = false;
     }
+    // Evaluo el comando
     switch (comando)
     {
     case 'R': // FOWARD
@@ -178,33 +177,29 @@ void loop()
       Serial.println("Comando incorrecto :(");
       break;
     }
-    // Serial.flush();
   }
-  if (!mqttClient.connected()) {
+  
+  if (!mqttClient.connected())    // Reviso comunicacion con el broker mqtt
+  {
     Serial.println("reconectando...");
     reconnect();
   }
+
   //Serial.print("."); // Estoy vivo
 
   if (millis() - previousMillis > DELAY_MQTT) {  // Envio todo al broker cada DELAY_MQTT
-    inst_speed = ModbusLeerRegistro(SLAVE_ADDR, RUNNING_SPEED_ADDR);
-    //Serial.println(inst_speed);
-    enviar_mqtt("movimiento/motor1_speed", inst_speed);
-    //dtostrf(inst_speed, 2, 2, dato_mqtt);
-    //mqttClient.publish("movimiento/motor1_speed",dato_mqtt);
+    inst_speed_hz = ModbusLeerRegistro(SLAVE_ADDR, RUNNING_SPEED_ADDR);
+    enviar_mqtt("movimiento/motor1_speed", inst_speed_hz);
     previousMillis = millis();
   }
   
   delay(200);
   mqttClient.loop();
-  if (digitalRead(BUTTON2) == LOW)
-  {
-    Serial.println(ModbusLeerRegistro(SLAVE_ADDR, RUNNING_SPEED_ADDR));
-  }
-  // Toggle led
+  // Toggle led - Alive test
   (digitalRead(LED2_PIN)) ? digitalWrite(LED2_PIN, LOW) : digitalWrite(LED2_PIN, HIGH);
 }
-/* ============= FUNCIONES ============= */
+/* ========================== FUNCIONES ========================== */
+/* LEER UN REGISTRO MODBUS RTU */
 int ModbusLeerRegistro(char dir, uint16_t registro)
 {
   char trama[8], trama_recep[3];
@@ -212,7 +207,7 @@ int ModbusLeerRegistro(char dir, uint16_t registro)
   trama_recep[1] = 0x00;
   trama_recep[2] = 0x00;
   int i = 0;
-  double resultado = 0.0;
+  int resultado = 0;
   //uint16_t resultado = 0x0000;
   uint16_t crc = 0xFFFF;
   trama[0] = dir;       // 0x01 - Direccion del esclavo
@@ -229,16 +224,12 @@ int ModbusLeerRegistro(char dir, uint16_t registro)
   trama[7] = highByte(crc);
 
   // Envio la trama
-
   digitalWrite(RS485_EN, HIGH);
-  // delayMicroseconds(365);
-
   i = 0;
   for (i = 0; i < 8; i++)
   {
     Serial1.write(trama[i]);
   }
-
   Serial1.flush();
   delayMicroseconds(2500); // 3 bytes
   digitalWrite(RS485_EN, LOW);
@@ -247,6 +238,11 @@ int ModbusLeerRegistro(char dir, uint16_t registro)
   // Termina el envio de la trama
 
   while(Serial1.read() != 0x0B);    // Espero a que termine la trama de envio
+  if (Serial1.read() == -1)         // Verifico que llego algo
+  {                                 // Si no llego nada salgo, error de conexion
+    Serial.println("RS485 no connection :(");
+    return -1;
+  }
   while(Serial1.read() != 0x03);
   trama_recep[0] = Serial1.read();  // Guardo lo que sigue
   trama_recep[1] = Serial1.read();
@@ -267,6 +263,7 @@ int ModbusLeerRegistro(char dir, uint16_t registro)
   resultado = 256 * (uint8_t)trama_recep[1] + (uint8_t)trama_recep[2];
   return resultado;
 }
+/* ESCRIBIR UN REGISTRO MODBUS RTU */
 int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor)
 {
   char trama[8];
@@ -286,22 +283,21 @@ int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor)
   trama[6] = lowByte(crc);
   trama[7] = highByte(crc);
 
+  // Envio la trama
   digitalWrite(RS485_EN, HIGH);
-  // delayMicroseconds(365);
-
   i = 0;
   for (i = 0; i < 8; i++)
   {
     Serial1.write(trama[i]);
   }
-
-  // Serial1.flush();
+  Serial1.flush();
   delayMicroseconds(2500); // 3 bytes
-
   digitalWrite(RS485_EN, LOW);
-
   delayMicroseconds(6700); // 8 bytes
 
+  // Termina el envio de la trama
+
+  while(Serial1.read() != trama[7]);    // Espero a que llege el CRC enviado
   // Chequeo del dato
   i = 0;
   for (i = 0; i < 8; i++)
@@ -324,6 +320,7 @@ uint16_t crc16_update(uint16_t crc, uint8_t a)
   }
   return crc;
 }
+/* RECONEXION MQTT */
 void reconnect() {
   // Loop until we're reconnected
   while (!mqttClient.connected()) {
@@ -360,8 +357,10 @@ void callback(char* topic, byte* payload, unsigned int length)
   }
   Serial.println();
 }
+/* PUBLICO UN DATO POR MQTT */
 void enviar_mqtt(const char* topic, int number)
 {
+  // Paso el dato a string
   char dato_mqtt[6];
   uint8_t decena, unidad, decima, centesima;
   decena = number / 1000;
@@ -374,6 +373,8 @@ void enviar_mqtt(const char* topic, int number)
   dato_mqtt[3] = decima + '0';
   dato_mqtt[4] = centesima + '0';
   dato_mqtt[5] = '\0';
-  Serial.println(dato_mqtt);
-  mqttClient.publish(topic, dato_mqtt);
+  //Serial.println(dato_mqtt);
+  mqttClient.publish(topic, dato_mqtt);   // Publico
 }
+/* ==================================================== */
+// EOF
