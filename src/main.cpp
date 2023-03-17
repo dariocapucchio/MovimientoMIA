@@ -16,6 +16,7 @@
 #define LED1_PIN 14
 #define LED2_PIN 15
 #define RS485_EN 2
+#define PWM_PIN 3
 #define DELAY_MQTT 1500  // Tiempo de espera entre publicaciones en ms
 
 #define SLAVE_ADDR    0x01          // Direccion del esclavo (variador)
@@ -55,6 +56,7 @@ char comando;             // Caracter con la accion de comando
 bool flag_mqtt;           // Flag para reconocer la recepcion por mqtt
 uint16_t speed;           // Velocidad (set point) al variador
 int inst_speed_hz = 0;    // Velocidad instantanea en Hz
+uint8_t pwm = 0;
 
 /* ========================== SETUP CORE 0 ========================== */
 void setup()
@@ -67,11 +69,15 @@ void setup()
   pinMode(LED1_PIN, OUTPUT);
   pinMode(LED2_PIN, OUTPUT);
   pinMode(RS485_EN, OUTPUT);
+  pinMode(PWM_PIN, OUTPUT);
+  analogWrite(PWM_PIN, LOW);
   digitalWrite(LED1, LOW);
   digitalWrite(LED2, HIGH);    // Motor parado
   digitalWrite(RS485_EN, LOW); // Recivo RS485
   // digitalWrite(RS485_EN,HIGH); // Envio RS485
 
+  // Espero a que se aprete el boton 1 para poder verificar por puerto 
+  // serie la conexion al broker mqtt. Despues se comenta
   while (digitalRead(BUTTON1) != LOW)
   {
     Serial.println("Apreta el boton 1 o me quedo aca ");
@@ -107,11 +113,11 @@ void setup()
   if (!client.connected()) {
     reconnect();
   }
-  
+  // Suscripciones
   mqttClient.subscribe("movimiento/motor1");
-
   mqttClient.loop();
 
+  // Inicio variables
   comando = '0';
   flag_mqtt = false;
   speed = 5000;
@@ -192,7 +198,10 @@ void loop()
     enviar_mqtt("movimiento/motor1_speed", inst_speed_hz);
     previousMillis = millis();
   }
-  
+
+  (pwm < 255) ? pwm++ : pwm = 0;
+  analogWrite(PWM_PIN, pwm);
+
   delay(200);
   mqttClient.loop();
   // Toggle led - Alive test
