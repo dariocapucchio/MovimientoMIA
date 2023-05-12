@@ -1,6 +1,10 @@
 /**********************************************************************************
- *   Movimiento MIA
- *     Control de motor trifasico con variador de frecuencia Powtran PI130
+ *   Movimiento MIA + cosas
+ *     -> Control de motor trifasico con variador de frecuencia Powtran PI130
+ *     por prtocolo RS485 via Ethernet
+ *     -> Tambien probe la comunicacion I2C para la placa esclavo del Rotador
+ *     -> Prueba del sensor DS18B20 con comunicacion One Wire para la placa de
+ *     telemetria de MIA
  *   Autor: Dario Capucchio
  *   Fecha: 15-02-2023
  *   Hardware: Raspberry Pi Pico
@@ -10,14 +14,17 @@
 #include <Arduino.h>
 #include <EthernetENC.h>
 #include <PubSubClient.h>
+#include <Wire.h>
+#include <OneWireDS.h>
 /* ============= DEFINICIONES ============= */
 #define BUTTON1 12
 #define BUTTON2 13
 #define LED1_PIN 14
 #define LED2_PIN 15
 #define RS485_EN 2
-#define PWM_PIN 3
-#define DELAY_MQTT 1500  // Tiempo de espera entre publicaciones en ms
+#define PWM_PIN 22        // Salida PWM para el control de la celda en GPIO 22 (pico pin 29)
+#define ONE_WIRE_PIN 6    // Sensor de temperatura en GPIO 6 (pico pin 9)
+#define DELAY_MQTT 1500   // Tiempo de espera entre publicaciones en ms
 
 #define SLAVE_ADDR    0x01          // Direccion del esclavo (variador)
 #define CMD_READ      0x03          // Comando de lectura
@@ -34,6 +41,7 @@
 #define RUNNING_SPEED_ADDR  0x1007  // Direccion con la velocidad actual
 
 #define CLIENT_ID "MIA_movimiento"  // ID del cliente mqtt
+#define MY_SLAVE_I2C_ADDR 0x70
 
 // FUNCIONES
 int ModbusEscribirRegistro(char dir, uint16_t registro, uint16_t valor);
@@ -42,6 +50,7 @@ uint16_t crc16_update(uint16_t crc, uint8_t a);
 void callback(char* topic, byte* payload, unsigned int length);  // Funcion para la recepcion via MQTT
 void reconnect(void);
 void enviar_mqtt(const char* topic, int number);
+void handler_i2c(int length);
 
 // DEFINICIONES PARA LA CONEXION ETHERNET CON ENC28J60
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE}; // Dirección MAC del módulo Ethernet
@@ -57,6 +66,11 @@ bool flag_mqtt;           // Flag para reconocer la recepcion por mqtt
 uint16_t speed;           // Velocidad (set point) al variador
 int inst_speed_hz = 0;    // Velocidad instantanea en Hz
 uint8_t pwm = 0;
+uint16_t cuenta;          // Valor de la cuenta del conversor AD
+float V_ad0;
+float temperatura;        // Temperatura medida con el sensor DS18B20
+byte addr[8];         // Direccion para la comunicacion onewire
+byte scratch[9];      // Direccion de memoria del sensor DS18B20
 
 /* ========================== SETUP CORE 0 ========================== */
 void setup()
@@ -66,6 +80,8 @@ void setup()
 
   pinMode(BUTTON1, INPUT_PULLUP);
   pinMode(BUTTON2, INPUT_PULLUP);
+  pinMode(A0, INPUT);
+  analogReadResolution(12);
   pinMode(LED1_PIN, OUTPUT);
   pinMode(LED2_PIN, OUTPUT);
   pinMode(RS485_EN, OUTPUT);
@@ -98,7 +114,7 @@ void setup()
   Serial.print("IP local: "); // Verifico la direccion de ip
   Serial.println(Ethernet.localIP());
 
-  Serial.print("connecting to host...");
+  Serial.print("Conectando al host...");
   while (!client.connect(server, 1883))
   {
     Serial.print(".");
@@ -116,6 +132,12 @@ void setup()
   // Suscripciones
   mqttClient.subscribe("movimiento/motor1");
   mqttClient.loop();
+
+  // Inicio comunicacion I2C
+  Serial.print("Iniciando comunicacion I2C...");
+  Wire.begin(MY_SLAVE_I2C_ADDR);
+  Wire.onReceive(handler_i2c);
+  Serial.println("OK");
 
   // Inicio variables
   comando = '0';
@@ -179,6 +201,37 @@ void loop()
       Serial.println("Motor SET SPEED  - check:");
       Serial.println(ModbusEscribirRegistro(SLAVE_ADDR, SPEED_PARAM_ADDR, speed));
       break;
+    case 'D':           // Prueba de sensor DSO
+      Serial.print("-> DS18B20 inicio: ");
+      Serial.println(owBegin(ONE_WIRE_PIN));
+      //owBegin(ONE_WIRE_PIN);
+      owWriteByte(READ_ROM,ONE_WIRE_PIN);
+      //owWriteByte(READ_SCRATCH,ONE_WIRE_PIN);
+      owReadBytes(&addr[0],8,ONE_WIRE_PIN);
+      Serial.print("-> ROM: ");
+      for (uint8_t i = 0; i<8; i++)
+      {
+        Serial.print(addr[i],HEX);
+        Serial.print(":");
+      }
+      Serial.println();
+      break;
+    case 'C':
+      Serial.print("-> DS18B20 conversion...");
+      owBegin(ONE_WIRE_PIN);
+      owWriteByte(SKIP_ROM,ONE_WIRE_PIN);
+      owWriteByte(READ_SCRATCH,ONE_WIRE_PIN);
+      Serial.print("listo");
+      break;
+    case 'A':
+      Serial.print("-> ADC0 = ");
+      cuenta = (analogRead(A0) >> 2);
+      Serial.print(cuenta);
+      V_ad0 = 3.3 * cuenta / 1024;
+      Serial.print(" : ");
+      Serial.print(V_ad0);
+      Serial. println("V");
+      break;
     default: // OTRO CARACTER
       Serial.println("Comando incorrecto :(");
       break;
@@ -194,19 +247,24 @@ void loop()
   //Serial.print("."); // Estoy vivo
 
   if (millis() - previousMillis > DELAY_MQTT) {  // Envio todo al broker cada DELAY_MQTT
-    inst_speed_hz = ModbusLeerRegistro(SLAVE_ADDR, RUNNING_SPEED_ADDR);
-    enviar_mqtt("movimiento/motor1_speed", inst_speed_hz);
+    //inst_speed_hz = ModbusLeerRegistro(SLAVE_ADDR, RUNNING_SPEED_ADDR);
+    //enviar_mqtt("movimiento/motor1_speed", inst_speed_hz);
     previousMillis = millis();
   }
 
-  (pwm < 255) ? pwm++ : pwm = 0;
-  analogWrite(PWM_PIN, pwm);
+  //(pwm < 255) ? pwm++ : pwm = 0;
+  //analogWrite(PWM_PIN, pwm);
+
+  //cuenta = (analogRead(A0) >> 2);
+  //V_ad0 = 3.3 * cuenta / 1024;
+  //Serial.println(V_ad0);
 
   delay(200);
   mqttClient.loop();
   // Toggle led - Alive test
   (digitalRead(LED2_PIN)) ? digitalWrite(LED2_PIN, LOW) : digitalWrite(LED2_PIN, HIGH);
 }
+
 /* ========================== FUNCIONES ========================== */
 /* LEER UN REGISTRO MODBUS RTU */
 int ModbusLeerRegistro(char dir, uint16_t registro)
@@ -343,8 +401,10 @@ void reconnect() {
       Serial.println(" try again in 5 seconds");
       // Wait 5 seconds before retrying
       delay(5000);
+      (digitalRead(LED1_PIN)) ? digitalWrite(LED1_PIN, LOW) : digitalWrite(LED1_PIN, HIGH);
     }
   }
+  digitalWrite(LED1_PIN, LOW);
 }
 /* CALLBACK MQTT */
 void callback(char* topic, byte* payload, unsigned int length)
@@ -384,6 +444,20 @@ void enviar_mqtt(const char* topic, int number)
   dato_mqtt[5] = '\0';
   //Serial.println(dato_mqtt);
   mqttClient.publish(topic, dato_mqtt);   // Publico
+}
+/* HANDLER I2C */
+void handler_i2c(int length)
+{
+  Serial.print("-> Recibiendo por I2C: ");
+  char c = Wire.read();
+  Serial.print(c);
+  while(0 < Wire.available())   // Leo todos menos el ultimo
+  {
+    Serial.print(":");
+    int x = Wire.read();
+    Serial.print(x);
+  }
+  Serial.println();
 }
 /* ==================================================== */
 // EOF
